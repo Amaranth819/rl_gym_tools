@@ -174,7 +174,7 @@ class BaseTrainer(object):
     '''
         Visualize gradient flow
     '''
-    def visualize_gradient_flow(self):
+    def visualize_gradient_flow(self, sequential = False):
         def plot_grad_flow(named_parameters):
             '''Plots the gradients flowing through different layers in the net during training.
             Can be used for checking for possible gradient vanishing / exploding problems.
@@ -207,5 +207,5 @@ class BaseTrainer(object):
             plt.savefig('GradientFlow.png')
 
         self.collect(False, False)
-        self.train(batch_size = None, sequential = False)
+        self.train(None, sequential)
         plot_grad_flow(self.model.cpu().named_parameters())
