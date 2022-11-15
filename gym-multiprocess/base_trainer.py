@@ -19,6 +19,7 @@ class BaseTrainer(object):
         optimizer : torch.optim.Optimizer, 
         lr_scheduler : torch.optim.lr_scheduler = None, 
         device : str = 'auto',
+        clip_grad_max_norm : float = None
     ) -> None:
         self.device = get_device(device)
         self.env = env
@@ -27,6 +28,7 @@ class BaseTrainer(object):
         self.model = model.to(self.device)
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
+        self.clip_grad_max_norm = clip_grad_max_norm
 
 
     def collect(self, model_prediction = True, deterministic = False):
@@ -78,13 +80,18 @@ class BaseTrainer(object):
         return log_info
 
 
-    def _train(self, batch, clip_grad_max_norm = None):
+    def _train(self, batch):
         loss, batch_training_log_info = self.model.update(batch)
         self.optimizer.zero_grad()
         loss.backward()
-        if clip_grad_max_norm is not None:
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm = clip_grad_max_norm)
+        if self.clip_grad_max_norm is not None:
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm = self.clip_grad_max_norm)
         self.optimizer.step()
+
+        # Record the learning rate
+        for idx, group in enumerate(self.optimizer.param_groups):
+            batch_training_log_info['lr_{}'.format(idx)] = group['lr']
+
         return batch_training_log_info
 
 
