@@ -38,11 +38,11 @@ class BaseBuffer(object):
         buffer_list = self._get_buffer_list()
         if sequential:
             total_size = self.n_envs
-            indexing_func = lambda x, inds: x[:, inds]
+            indexing_func = lambda x, inds: torch.from_numpy(x[:, inds]).to(self.device)
         else:
             buffer_list = tuple(map(lambda x: self.flatten(x), buffer_list))
             total_size = self.n_envs * self.pos
-            indexing_func = lambda x, inds: x[inds]
+            indexing_func = lambda x, inds: torch.from_numpy(x[inds]).to(self.device)
         
         inds = np.random.permutation(total_size)
         if batch_size is None:
@@ -50,7 +50,7 @@ class BaseBuffer(object):
 
         start_idx = 0
         while start_idx < total_size:
-            yield map(functools.partial(indexing_func, inds = inds[start_idx:start_idx + batch_size]), buffer_list)
+            yield tuple(map(functools.partial(indexing_func, inds = inds[start_idx:start_idx + batch_size]), buffer_list))
             start_idx += batch_size
 
 
@@ -152,23 +152,23 @@ class RolloutBuffer(BaseBuffer):
 
 
 
-if __name__ == '__main__':
-    from multienv import make_mp_envs
-    n = 20
-    n_envs = 2
-    env = make_mp_envs('Humanoid-v4', n_envs = n_envs)
-    obs = env.reset()
-    buffer = ReplayBuffer(env.single_observation_space, env.single_action_space, n, n_envs)
+# if __name__ == '__main__':
+#     from multienv import make_mp_envs
+#     n = 20
+#     n_envs = 2
+#     env = make_mp_envs('Humanoid-v4', n_envs = n_envs)
+#     obs = env.reset()
+#     buffer = ReplayBuffer(env.single_observation_space, env.single_action_space, n, n_envs)
 
-    for e in range(n):
-        action = env.sample_actions()
-        next_obs, reward, done, _ = env.step(action)
-        buffer.add(obs, next_obs, action, reward, done)
-        obs = next_obs
+#     for e in range(n):
+#         action = env.sample_actions()
+#         next_obs, reward, done, _ = env.step(action)
+#         buffer.add(obs, next_obs, action, reward, done)
+#         obs = next_obs
     
-    # buffer.compute_returns_and_advantage(np.zeros(1), done, 1, 1)    
-    # for e in range(n):
-    #     print(buffer.rewards[e], buffer.values[e], buffer.advantages[e], buffer.dones[e])
+#     # buffer.compute_returns_and_advantage(np.zeros(1), done, 1, 1)    
+#     # for e in range(n):
+#     #     print(buffer.rewards[e], buffer.values[e], buffer.advantages[e], buffer.dones[e])
     
-    for obs, next_obs, action, reward, done in buffer.generate_data(batch_size = 2, sequential = True):
-        print(obs.shape)
+#     for obs, next_obs, action, reward, done in buffer.generate_data(batch_size = 2, sequential = True):
+#         print(obs.size(), obs.device)

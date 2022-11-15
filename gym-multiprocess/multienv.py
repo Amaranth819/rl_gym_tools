@@ -51,6 +51,8 @@ def worker(remote, parent_remote, env_fn):
             remote.send(obs)
         elif cmd == 'get_spaces':
             remote.send((env.observation_space, env.action_space))
+        elif cmd == 'get_max_episode_steps':
+            remote.send(env._max_episode_steps)
         elif cmd == 'render':
             remote.send(env.render())
         elif cmd == 'close':
@@ -78,6 +80,9 @@ class SubprocVecEnv(object):
 
         self.remotes[0].send(('get_spaces', None))
         self.single_observation_space, self.single_action_space = self.remotes[0].recv()
+
+        self.remotes[0].send(('get_max_episode_steps', None))
+        self._max_episode_steps = self.remotes[0].recv()
 
 
     def sample_actions(self):
@@ -161,13 +166,14 @@ if __name__ == '__main__':
     # env_fn = lambda: HalfCheetahEnv_RandomDynamics()
     env_fn = None
     envs = make_mp_envs('HalfCheetahRandomDynamics-v0', env_fn = env_fn, n_envs = 4)
+    print(envs._max_episode_steps)
     # envs = VecEnv('Ant-v4', 20)
     act_dim = envs.single_action_space.shape[0]
     envs.reset()
     curr = time.time()
     rewards = []
     steps = []
-    for e in range(1002):
+    for e in range(1000):
         _, _, dones, infos = envs.step(envs.sample_actions())
         # print(e, np.all(dones))
         for info in infos:
@@ -177,3 +183,4 @@ if __name__ == '__main__':
     print(time.time() - curr)
     print(rewards, np.mean(rewards))
     print(steps, np.mean(steps))
+
