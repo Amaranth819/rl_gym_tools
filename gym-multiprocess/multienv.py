@@ -10,6 +10,10 @@ from multiprocessing import Pipe, Process
     1. https://squadrick.dev/journal/efficient-multi-gym-environments.html
     2. https://stable-baselines.readthedocs.io/en/master/_modules/stable_baselines/common/vec_env/subproc_vec_env.html#SubprocVecEnv
 '''
+GYM_RESERVED_KEYS = [
+    "metadata", "reward_range", "spec", "action_space", "observation_space", "_max_episode_steps"
+]
+
 class CloudpickleWrapper(object):
 	def __init__(self, x):
 		self.x = x
@@ -27,34 +31,33 @@ class CloudpickleWrapper(object):
 def worker(remote, parent_remote, env_fn):
     parent_remote.close()
     env = env_fn()
-    total_rewards = 0
-    total_steps = 0
+    episode_reward = 0
+    episode_step = 0
 
     while True:
         cmd, data = remote.recv()
 
         if cmd == 'step':
             obs, reward, done, info = env.step(data)
-            total_rewards += reward
-            total_steps += 1
+            episode_reward += reward
+            episode_step += 1
+            info['terminate'] = done
             if done:
                 obs = env.reset()
-                info['total_rewards'] = total_rewards
-                info['total_steps'] = total_steps
-                total_rewards = 0
-                total_steps = 0
+                info['episode_reward'] = episode_reward
+                info['episode_step'] = episode_step
+                episode_reward = 0
+                episode_step = 0
             remote.send((obs, reward, done, info))
         elif cmd == 'reset':
             obs = env.reset()
-            total_rewards = 0
-            total_steps = 0
+            episode_reward = 0
+            episode_step = 0
             remote.send(obs)
-        elif cmd == 'get_spaces':
-            remote.send((env.observation_space, env.action_space))
-        elif cmd == 'get_max_episode_steps':
-            remote.send(env._max_episode_steps)
         elif cmd == 'render':
-            remote.send(env.render())
+            remote.send(env.render(mode = data))
+        elif cmd in GYM_RESERVED_KEYS:
+            remote.send(getattr(env, cmd))
         elif cmd == 'close':
             env.close()
             remote.close()
@@ -78,15 +81,13 @@ class SubprocVecEnv(object):
             self.ps.append(process)
             wrk.close()
 
-        self.remotes[0].send(('get_spaces', None))
-        self.single_observation_space, self.single_action_space = self.remotes[0].recv()
-
-        self.remotes[0].send(('get_max_episode_steps', None))
-        self._max_episode_steps = self.remotes[0].recv()
+        for key in GYM_RESERVED_KEYS:
+            self.remotes[0].send((key, None))
+            setattr(self, key, self.remotes[0].recv())
 
 
     def sample_actions(self):
-        return np.stack([self.single_action_space.sample() for _ in range(self.n_envs)])
+        return np.stack([self.action_space.sample() for _ in range(self.n_envs)])
 
 
     def step_async(self, actions):
@@ -117,6 +118,12 @@ class SubprocVecEnv(object):
         for remote in self.remotes:
             remote.send(('reset', None))
         return np.stack([remote.recv() for remote in self.remotes])
+
+
+    # def render(self, mode):
+    #     for remote in self.remotes:
+    #         remote.send(('render', mode))
+    #     return np.stack([remote.recv() for remote in self.remotes])
 
 
     def close(self):
@@ -168,7 +175,7 @@ if __name__ == '__main__':
     envs = make_mp_envs('HalfCheetahRandomDynamics-v0', env_fn = env_fn, n_envs = 4)
     print(envs._max_episode_steps)
     # envs = VecEnv('Ant-v4', 20)
-    act_dim = envs.single_action_space.shape[0]
+    act_dim = envs.action_space.shape[0]
     envs.reset()
     curr = time.time()
     rewards = []

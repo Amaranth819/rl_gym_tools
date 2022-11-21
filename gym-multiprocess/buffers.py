@@ -27,6 +27,8 @@ class BaseBuffer(object):
 
     def reset(self):
         self.pos = 0
+        for comp in self._get_buffer_list():
+            comp.fill(0)
 
 
     def flatten(self, arr):
@@ -35,14 +37,14 @@ class BaseBuffer(object):
 
 
     def generate_data(self, batch_size = None, sequential = False):
-        buffer_list = self._get_buffer_list()
+        buffer_list = (comp[:self.pos] for comp in self._get_buffer_list())
         if sequential:
             total_size = self.n_envs
-            indexing_func = lambda x, inds: torch.from_numpy(x[:, inds]).to(self.device)
+            indexing_func = lambda x, inds: torch.from_numpy(x[:, inds]).float().to(self.device)
         else:
             buffer_list = tuple(map(lambda x: self.flatten(x), buffer_list))
             total_size = self.n_envs * self.pos
-            indexing_func = lambda x, inds: torch.from_numpy(x[inds]).to(self.device)
+            indexing_func = lambda x, inds: torch.from_numpy(x[inds]).float().to(self.device)
         
         inds = np.random.permutation(total_size)
         if batch_size is None:
