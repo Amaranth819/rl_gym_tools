@@ -1,0 +1,7 @@
+cloudpickle==1.6.0
+gym==0.24.0
+matplotlib==3.4.3
+mujoco==2.2.0
+numpy==1.21.5
+tensorboardX==2.5.1
+torch==1.11.0
