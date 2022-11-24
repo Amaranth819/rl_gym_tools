@@ -1,176 +1,122 @@
-import torch
 import numpy as np
-import functools
+import random
+import torch
+import copy
+import os
+import pickle
 from utils import get_device, get_space_shape
 
 
 
 '''
-    Base buffer class
+    Replay buffer class (can be used for both on-policy and off-policy algorithms).
 '''
-class BaseBuffer(object):
-    def __init__(self, obs_space, act_space, buffer_size, n_envs = 1, device = 'auto') -> None:
-        self.obs_space = obs_space
-        self.act_space = act_space
-        self.buffer_size = buffer_size
-        self.n_envs = n_envs
-        self.device = get_device(device)
-
-        self.obs_shape = get_space_shape(self.obs_space)
-        self.act_shape = get_space_shape(self.act_space)
+class ReplayBuffer(object):
+    def __init__(self, capacity, device = 'auto', seed = 123456) -> None:
+        random.seed(seed)
+        self.capacity = capacity
         self.pos = 0
-
-
-    def add(self):
-        raise NotImplementedError
+        self.device = get_device(device)
+        self.buffer = []
+        self.sample_helper_func = lambda x: torch.from_numpy(np.concatenate(x)).float().to(self.device)
 
 
     def reset(self):
+        self.buffer.clear()
         self.pos = 0
-        for comp in self._get_buffer_list():
-            comp.fill(0)
-
-
-    def flatten(self, arr):
-        shape = arr.shape
-        return np.swapaxes(arr, 0, 1).reshape(shape[0] * shape[1], *shape[2:])
-
-
-    def generate_data(self, batch_size = None, sequential = False):
-        buffer_list = (comp[:self.pos] for comp in self._get_buffer_list())
-        if sequential:
-            total_size = self.n_envs
-            indexing_func = lambda x, inds: torch.from_numpy(x[:, inds]).float().to(self.device)
-        else:
-            buffer_list = tuple(map(lambda x: self.flatten(x), buffer_list))
-            total_size = self.n_envs * self.pos
-            indexing_func = lambda x, inds: torch.from_numpy(x[inds]).float().to(self.device)
         
-        inds = np.random.permutation(total_size)
-        if batch_size is None:
-            batch_size = total_size
 
+    def add(self, batch):
+        # batch: arrays of size (n_env, ...)
+        batch = copy.deepcopy(batch)
+        self.pos = (self.pos + 1) % self.capacity
+        if len(self.buffer) < self.capacity:
+            self.buffer.append(batch)
+        else:
+            self.buffer[self.pos] = batch
+
+
+    def sample(self, batch_size):
+        batch = random.sample(self.buffer, batch_size)
+        return tuple(map(self.sample_helper_func, zip(*batch)))
+
+
+    def generate_dataset(self, batch_size = None):
+        indices = np.random.permutation(self.size)
+        if batch_size is None:
+            batch_size = self.size
         start_idx = 0
-        while start_idx < total_size:
-            yield tuple(map(functools.partial(indexing_func, inds = inds[start_idx:start_idx + batch_size]), buffer_list))
+        while start_idx < self.size:
+            batch = [self.buffer[idx] for idx in indices[start_idx:start_idx + batch_size]]
+            yield tuple(map(self.sample_helper_func, zip(*batch)))
             start_idx += batch_size
 
 
+    def save(self, save_path):
+        dirname = os.path.dirname(save_path)
+        if not os.path.exists(dirname):
+            os.makedirs(dirname)
 
-    def _get_buffer_list(self):
-        raise NotImplementedError
+        with open(save_path, 'wb') as f:
+            pickle.dump(self.buffer, f)
+
+
+    def load(self, load_path):
+        with open(load_path, 'rb') as f:
+            self.buffer = pickle.load(f)
+            self.pos = len(self.buffer) % self.capacity
 
 
     @property
     def size(self):
-        return self.pos
+        return len(self.buffer)
 
 
     @property
-    def isfull(self):
-        return self.pos >= self.buffer_size
+    def is_full(self):
+        return len(self.buffer) >= self.capacity
 
 
 
-'''
-    Replay buffer for off-policy algorithms
-'''
-class ReplayBuffer(BaseBuffer):
-    def __init__(self, obs_space, act_space, buffer_size, n_envs = 1, device = 'auto', overwrite = False) -> None:
-        super().__init__(obs_space, act_space, buffer_size, n_envs, device) 
+class SequentialReplayBuffer(ReplayBuffer):
+    def __init__(self, capacity, device = 'auto', seed = 123456) -> None:
+        super().__init__(capacity, device, seed)
 
-        self.observations = np.zeros((self.buffer_size, self.n_envs) + self.obs_shape, dtype = self.obs_space.dtype)
-        self.next_observations = np.zeros((self.buffer_size, self.n_envs) + self.obs_shape, dtype = self.obs_space.dtype)
-        self.actions = np.zeros((self.buffer_size, self.n_envs) + self.act_shape, dtype = self.act_space.dtype)
-        self.rewards = np.zeros((self.buffer_size, self.n_envs), dtype = np.float32)
-        self.dones = np.zeros((self.buffer_size, self.n_envs), dtype = np.float32)
-        self.overwrite = overwrite
+        self.sample_helper_func = lambda x: torch.from_numpy(np.stack(x, 0)).float().to(self.device)
 
 
-    def add(self, obs, next_obs, action, reward, done):
-        self.observations[self.pos] = np.copy(obs)
-        self.next_observations[self.pos] = np.copy(next_obs)
-        self.actions[self.pos] = np.copy(action)
-        self.rewards[self.pos] = np.copy(reward)
-        self.dones[self.pos] = np.copy(done)
-        self.pos = (self.pos + 1) % self.buffer_size if self.overwrite else self.pos + 1
+    def sample(self, batch_size):
+        tmp_buffer = tuple(map(self.sample_helper_func, zip(*self.buffer)))
+        n_envs = tmp_buffer[0].size(1)
+        sampled_env_indices = np.random.permutation(n_envs)[:batch_size]
+        return tuple(map(lambda x: x[:, sampled_env_indices], tmp_buffer))
 
-
-    def _get_buffer_list(self):
-        return self.observations, self.next_observations, self.actions, self.rewards, self.dones
-
-
-
-
-'''
-    Rollout buffer for on-policy algorithms
-'''
-class RolloutBuffer(BaseBuffer):
-    def __init__(self, obs_space, act_space, buffer_size, n_envs = 1, device = 'auto') -> None:
-        super().__init__(obs_space, act_space, buffer_size, n_envs, device)
-
-        self.observations = np.zeros((self.buffer_size, self.n_envs) + self.obs_shape, dtype = self.obs_space.dtype)
-        self.next_observations = np.zeros((self.buffer_size, self.n_envs) + self.obs_shape, dtype = self.obs_space.dtype)
-        self.actions = np.zeros((self.buffer_size, self.n_envs) + self.act_shape, dtype = self.act_space.dtype)
-        self.rewards = np.zeros((self.buffer_size, self.n_envs), dtype = np.float32)
-        self.dones = np.zeros((self.buffer_size, self.n_envs), dtype = np.float32)
-        self.values = np.zeros((self.buffer_size, self.n_envs), dtype = np.float32)
-        self.log_probs = np.zeros((self.buffer_size, self.n_envs), dtype = np.float32)
-        self.advantages = np.zeros((self.buffer_size, self.n_envs), dtype = np.float32)
-
-
-    def add(self, obs, next_obs, action, reward, done, value = None, log_prob = None):
-        self.observations[self.pos] = np.copy(obs)
-        self.next_observations[self.pos] = np.copy(next_obs)
-        self.actions[self.pos] = np.copy(action)
-        self.rewards[self.pos] = np.copy(reward)
-        self.dones[self.pos] = np.copy(done)
-        if value is not None:
-            self.values[self.pos] = np.copy(value)
-        if log_prob is not None:
-            self.log_probs[self.pos] = np.copy(log_prob)
-        self.pos += 1
-
-
-    def compute_returns_and_advantage(self, last_values, last_dones, gae_lambda, gamma):
-        last_gae_lam = 0
-        for s in reversed(range(self.pos)):
-            if s == self.pos - 1:
-                next_not_done = 1.0 - last_dones
-                next_values = last_values
-            else:
-                next_not_done = 1.0 - self.dones[s + 1]
-                next_values = self.values[s + 1]
-            
-            delta = self.rewards[s] + gamma * next_values * next_not_done - self.values[s]
-            last_gae_lam = delta + gamma * gae_lambda * next_not_done * last_gae_lam
-            self.advantages[s] = last_gae_lam
-
-        self.returns = self.advantages + self.values
-
-
-    def _get_buffer_list(self):
-        return self.observations, self.next_observations, self.actions, self.rewards, self.dones, self.values, self.log_probs
-
-
-
-# if __name__ == '__main__':
-#     from multienv import make_mp_envs
-#     n = 20
-#     n_envs = 2
-#     env = make_mp_envs('Humanoid-v4', n_envs = n_envs)
-#     obs = env.reset()
-#     buffer = ReplayBuffer(env.single_observation_space, env.single_action_space, n, n_envs)
-
-#     for e in range(n):
-#         action = env.sample_actions()
-#         next_obs, reward, done, _ = env.step(action)
-#         buffer.add(obs, next_obs, action, reward, done)
-#         obs = next_obs
     
-#     # buffer.compute_returns_and_advantage(np.zeros(1), done, 1, 1)    
-#     # for e in range(n):
-#     #     print(buffer.rewards[e], buffer.values[e], buffer.advantages[e], buffer.dones[e])
+    def generate_dataset(self, batch_size = None):
+        tmp_buffer = tuple(map(self.sample_helper_func, zip(*self.buffer)))
+        n_envs = tmp_buffer[0].size(1)
+        env_indices = np.random.permutation(n_envs)
+        if batch_size is None:
+            batch_size = self.size
+        start_idx = 0
+        while start_idx < self.size:
+            yield tuple(map(lambda x: x[:, env_indices[start_idx:start_idx + batch_size]], tmp_buffer))
+            start_idx += batch_size
+
     
-#     for obs, next_obs, action, reward, done in buffer.generate_data(batch_size = 2, sequential = True):
-#         print(obs.size(), obs.device)
+
+
+if __name__ == '__main__':
+    buf = ReplayBuffer(10)
+    for _ in range(6):
+        buf.add((np.random.randn(3, 4), np.random.randn(3, 5)))
+    print([b.size() for b in buf.sample(2)])
+    for batch in buf.generate_dataset():
+        print([b.size() for b in batch])
+
+    buf = SequentialReplayBuffer(10)
+    for _ in range(8):
+        buf.add((np.random.randn(3, 4), np.random.randn(3, 5)))
+    print([b.size() for b in buf.sample(2)])
+    for batch in buf.generate_dataset():
+        print([b.size() for b in batch])

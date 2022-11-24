@@ -6,8 +6,14 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from utils import get_device, get_space_shape
 
+
 class BasePolicy(nn.Module):
-    def __init__(self, obs_space, act_space, is_recurrent = False, device = 'auto') -> None:
+    def __init__(self, 
+        obs_space, 
+        act_space, 
+        lr_scheduler : 'dict[str, torch.optim.lr_scheduler._LRScheduler]' = None,
+        device = 'auto'
+    ) -> None:
         super().__init__()
 
         self.obs_shape = get_space_shape(obs_space)
@@ -15,36 +21,80 @@ class BasePolicy(nn.Module):
         self.act_shape = get_space_shape(act_space)
         self.act_dim = np.prod(self.act_shape)
         self.device = get_device(device)
-        self.is_recurrent = is_recurrent
+        self.lr_scheduler = lr_scheduler
 
 
-    def init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                # For FC
-                torch.nn.init.normal_(m.weight.data, mean = 0, std = 0.1)
-                if m.bias is not None:
-                    torch.nn.init.zeros_(m.bias.data)
-            elif isinstance(m, (nn.LSTM, nn.GRU)):
-                # For recurrent network
-                for name, param in m.named_parameters():
-                    if 'weight' in name:
-                        torch.nn.init.orthogonal_(param)
-                    elif 'bias' in name:
-                        torch.nn.init.zeros_(param)
+    def init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            # For FC
+            # torch.nn.init.normal_(m.weight.data, mean = 0, std = 0.01)
+            torch.nn.init.xavier_uniform_(m.weight, gain=1)
+            # torch.nn.init.uniform_(m.weight, -0.01, 0.01)
+            if m.bias is not None:
+                torch.nn.init.zeros_(m.bias.data)
+        elif isinstance(m, (nn.LSTM, nn.GRU)):
+            # For recurrent network
+            for name, param in m.named_parameters():
+                if 'weight' in name:
+                    torch.nn.init.orthogonal_(param)
+                elif 'bias' in name:
+                    torch.nn.init.zeros_(param)
 
 
-    def predict(self, obs, deterministic = False):
+    def soft_update(self, target, source, tau):
+        with torch.no_grad():
+            for source_param, target_param in zip(source.parameters(), target.parameters()):
+                target_param.copy_(source_param * tau + target_param * (1.0 - tau))
+
+
+    def hard_update(self, target, source):
+        with torch.no_grad():
+            for source_param, target_param in zip(source.parameters(), target.parameters()):
+                target_param.copy_(source_param)
+
+
+    def step_lr_scheduler(self):
+        if self.lr_scheduler:
+            for _, scheduler in self.lr_scheduler.items():
+                scheduler.step()
+
+
+    def preprocess_fn(self, batch):
+        return batch
+
+
+    def learn(self, batch):
         raise NotImplementedError
 
 
-    def update(self, batch):
-        raise NotImplementedError
+    def predict(self, obs, state = None):
+        pass
 
 
     def get_policy_dict(self):
         # dict( name : (nn.Module or optimizer) )
         raise NotImplementedError
+
+
+    def compute_episodic_gae_return(self, rewards, dones, values, last_values, last_dones, gae_lambda, gamma):
+        # rewards, dones and values: tensors of shape [seq_len, n_envs]
+        length = rewards.size(0)
+        last_gae_lam = 0
+        advantages = torch.zeros_like(rewards)
+        for s in reversed(range(length)):
+            if s == length - 1:
+                next_not_done = 1.0 - last_dones
+                next_values = last_values
+            else:
+                next_not_done = 1.0 - dones[s + 1]
+                next_values = values[s + 1]
+            
+            delta = rewards[s] + gamma * next_values * next_not_done - values[s]
+            last_gae_lam = delta + gamma * gae_lambda * next_not_done * last_gae_lam
+            advantages[s] = last_gae_lam
+
+        returns = advantages + values
+        return advantages, returns
 
 
     def save(self, path):

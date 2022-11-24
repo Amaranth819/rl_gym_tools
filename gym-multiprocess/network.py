@@ -18,26 +18,50 @@ def create_mlp(in_dim, out_dim, hidden_dim_list = [256], act_fn = None, last_act
     return nn.Sequential(*layers)
 
 
-def create_distribution(p, mu_act_fn = None, min_logstd = -2, max_logstd = 0.5):
-    mu, logstd = torch.chunk(p, 2, -1)
-    if mu_act_fn is not None:
-        mu = mu_act_fn(mu)
-    std = torch.clip(logstd, min_logstd, max_logstd).exp()
-    dist = torch.distributions.Independent(torch.distributions.Normal(mu, std), 1)
-    return dist, (mu, std)
+def soft_update(target, source, tau):
+    with torch.no_grad():
+        for source_param, target_param in zip(source.parameters(), target.parameters()):
+            target_param.copy_(source_param * tau + target_param * (1.0 - tau))
 
 
+def hard_update(target, source):
+    with torch.no_grad():
+        for source_param, target_param in zip(source.parameters(), target.parameters()):
+            target_param.copy_(source_param)
+
+
+'''
+    Predict the continuous action space.
+'''
 class GaussianPolicy(nn.Module):
-    def __init__(self, in_dim, out_dim, hidden_dim_list = [256], act_fn = None, mu_act_fn = torch.tanh) -> None:
+    def __init__(self, in_dim, out_dim, hidden_dim_list = [256], min_logstd = -20, max_logstd = 2, action_space = None) -> None:
         super().__init__()
 
-        self.main = create_mlp(in_dim, out_dim * 2, hidden_dim_list, act_fn, None)
-        self.mu_act_fn = mu_act_fn
+        self.main = create_mlp(in_dim, out_dim * 2, hidden_dim_list, nn.ReLU, None)
+        self.min_logstd = min_logstd
+        self.max_logstd = max_logstd
+
+        if action_space is None:
+            self.action_scale = 1.0
+            self.action_bias = 0.0
+        else:
+            self.action_scale = 0.5 * (action_space.high - action_space.low)
+            self.action_bias = 0.5 * (action_space.high + action_space.low)
 
 
     def forward(self, x):
-        return create_distribution(self.main(x), self.mu_act_fn)
-
+        p = self.main(x)
+        mu, logstd = torch.chunk(p, 2, -1)
+        std = torch.clamp(logstd, self.min_logstd, self.max_logstd).exp()
+        dist = torch.distributions.Normal(mu, std)
+        # Reparameterization trick
+        a_t_pretanh = dist.rsample() 
+        a_t = torch.tanh(a_t_pretanh)
+        action = self.action_scale * a_t + self.action_bias
+        # Enforcing action bound
+        log_prob = torch.sum(dist.log_prob(a_t_pretanh) - torch.log(self.action_scale * (1 - a_t.pow(2)) + 1e-4), -1)
+        mu = torch.tanh(mu)
+        return action, log_prob, mu
 
 
 if __name__ == '__main__':
