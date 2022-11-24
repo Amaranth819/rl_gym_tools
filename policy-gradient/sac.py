@@ -109,64 +109,6 @@ class SACPolicy(BasePolicy):
 
 
 
-def sac_trainer(
-    env : SubprocVecEnv, 
-    model : SACPolicy, 
-    buffer : ReplayBuffer, 
-    batch_size : int, 
-    epoch : int, 
-    updates_per_step : int,
-    log_path = './sac/',
-    eval_frequency = 5,
-):
-    total_updates = 0
-    total_steps = 0
-    log = Logger(log_path)
-
-    for e in np.arange(epoch) + 1:
-        obs = env.reset()
-        episode_rewards_list, episode_steps_list = [], []
-        for _ in range(env._max_episode_steps):
-            with torch.no_grad():
-                action, _, _ = model.predict(obs)
-                action = tensor_to_np(action)
-
-            if buffer.size > batch_size:
-                for _ in range(updates_per_step):
-                    batch = buffer.sample(batch_size)
-                    log_dict = model.update(batch)
-                    log.add(total_updates, log_dict, 'Train')
-                    total_updates += 1
-
-            next_obs, rewards, dones, infos = env.step(action)
-            total_steps += 1
-            buffer.add((obs, next_obs, action, rewards, dones))
-            obs = next_obs.copy()
-            for info in infos:
-                if info['terminate']:
-                    episode_rewards_list.append(info['episode_reward'])
-                    episode_steps_list.append(info['episode_step'])
-        print('Epoch {:d} Sample: Rewards = {:.2f} +- {:.2f} | Steps = {:.2f} +- {:.2f}'.format(e, np.mean(episode_rewards_list), np.std(episode_rewards_list), np.mean(episode_steps_list), np.std(episode_steps_list)))
-
-
-        if e % eval_frequency == 0:
-            obs = env.reset()
-            episode_rewards_list, episode_steps_list = [], []
-            for _ in range(env._max_episode_steps):
-                with torch.no_grad():
-                    _, _, action = model.predict(obs)
-                    action = tensor_to_np(action)
-                next_obs, rewards, dones, infos = env.step(action)
-                obs = next_obs.copy()
-                for info in infos:
-                    if info['terminate']:
-                        episode_rewards_list.append(info['episode_reward'])
-                        episode_steps_list.append(info['episode_step'])            
-            print('Epoch {:d} Eval: Rewards = {:.2f} +- {:.2f} | Steps = {:.2f} +- {:.2f}'.format(e, np.mean(episode_rewards_list), np.std(episode_rewards_list), np.mean(episode_steps_list), np.std(episode_steps_list)))
-
-
-
-
 if __name__ == '__main__':
     from sac import SACPolicy
     from multienv import make_mp_envs
