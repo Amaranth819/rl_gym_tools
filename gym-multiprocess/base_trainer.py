@@ -16,6 +16,7 @@ class BaseTrainer(object):
         log_path = './log/',
         best_model_path = None,
         eval_frequency = None,
+        eval_epochs = 1,
         steps_per_collect = 1000,
         update_per_step = 1,
         reset_buffer_every_collect = False,
@@ -27,6 +28,7 @@ class BaseTrainer(object):
         self.log = Logger(log_path)
         self.best_model_path = best_model_path
         self.eval_frequency = eval_frequency
+        self.eval_epochs = eval_epochs
         self.steps_per_collect = steps_per_collect
         self.update_per_step = update_per_step
         self.reset_buffer_every_collect = reset_buffer_every_collect
@@ -40,7 +42,7 @@ class BaseTrainer(object):
 
 
     def _train_step(self, curr_epoch):
-        train_collect_result = self.collector.collect(self.steps_per_collect, True, self.reset_buffer_every_collect)
+        train_collect_result = self.collector.collect(self.steps_per_collect, 1, is_training = True, reset_buffer = self.reset_buffer_every_collect)
         update_result = self._policy_update_step()
         train_result = {**train_collect_result, **update_result}
         self.log.add(curr_epoch, train_result, 'Train/')
@@ -55,7 +57,7 @@ class BaseTrainer(object):
 
 
     def _test_step(self, curr_epoch):
-        test_collect_result = self.collector.collect(self.steps_per_collect, False, False)
+        test_collect_result = self.collector.collect(self.steps_per_collect, self.eval_epochs, is_training = False, reset_buffer = False)
         self.log.add(curr_epoch, test_collect_result, 'Test/')
         print('Epoch {:d} Eval: Rewards = {:.2f} +- {:.2f} | Steps = {:.2f} +- {:.2f}'.format(
             curr_epoch, 
@@ -93,10 +95,11 @@ class OffPolicyTrainer(BaseTrainer):
         log_path='./log/', 
         best_model_path=None, 
         eval_frequency=None, 
+        eval_epochs = 1,
         steps_per_collect=1000, 
         update_per_step=1
     ) -> None:
-        super().__init__(model, collector, epochs, batch_size, log_path, best_model_path, eval_frequency, steps_per_collect, update_per_step, reset_buffer_every_collect = False)
+        super().__init__(model, collector, epochs, batch_size, log_path, best_model_path, eval_frequency, eval_epochs, steps_per_collect, update_per_step, reset_buffer_every_collect = False)
 
 
     def _policy_update_step(self):

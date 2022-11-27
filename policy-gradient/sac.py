@@ -44,7 +44,7 @@ class SACPolicy(BasePolicy):
     ) -> None:
         super().__init__(obs_space, act_space, lr_scheduler, device)
 
-        self.alpha = alpha
+        self.alpha = alpha # Didn't implement alpha training now.
         self.gamma = gamma
         self.tau = tau
 
@@ -58,7 +58,7 @@ class SACPolicy(BasePolicy):
         self = self.to(self.device)
 
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr = actor_lr)
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), critic_lr)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr = critic_lr)
 
 
     def predict(self, obs, state = None):
@@ -135,6 +135,7 @@ if __name__ == '__main__':
         log_path = './sac/',
         best_model_path = './sac/best.pkl',
         eval_frequency = 5,
+        eval_epochs = 10,
         steps_per_collect = 1000,
         update_per_step = 1
     )

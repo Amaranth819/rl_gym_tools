@@ -27,8 +27,8 @@ class BasePolicy(nn.Module):
     def init_weights(self, m):
         if isinstance(m, nn.Linear):
             # For FC
-            # torch.nn.init.normal_(m.weight.data, mean = 0, std = 0.01)
-            torch.nn.init.xavier_uniform_(m.weight, gain=1)
+            torch.nn.init.normal_(m.weight.data, mean = 0, std = 0.1)
+            # torch.nn.init.xavier_uniform_(m.weight, gain=1)
             # torch.nn.init.uniform_(m.weight, -0.01, 0.01)
             if m.bias is not None:
                 torch.nn.init.zeros_(m.bias.data)

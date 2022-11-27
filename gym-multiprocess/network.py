@@ -34,12 +34,13 @@ def hard_update(target, source):
     Predict the continuous action space.
 '''
 class GaussianPolicy(nn.Module):
-    def __init__(self, in_dim, out_dim, hidden_dim_list = [256], min_logstd = -20, max_logstd = 2, action_space = None) -> None:
+    def __init__(self, in_dim, out_dim, hidden_dim_list = [256], min_logstd = -20, max_logstd = 2, mu_act_fn = 'tanh', action_space = None) -> None:
         super().__init__()
 
         self.main = create_mlp(in_dim, out_dim * 2, hidden_dim_list, nn.ReLU, None)
         self.min_logstd = min_logstd
         self.max_logstd = max_logstd
+        self.mu_act_fn = mu_act_fn
 
         if action_space is None:
             self.action_scale = 1.0
@@ -54,13 +55,21 @@ class GaussianPolicy(nn.Module):
         mu, logstd = torch.chunk(p, 2, -1)
         std = torch.clamp(logstd, self.min_logstd, self.max_logstd).exp()
         dist = torch.distributions.Normal(mu, std)
-        # Reparameterization trick
-        a_t_pretanh = dist.rsample() 
-        a_t = torch.tanh(a_t_pretanh)
-        action = self.action_scale * a_t + self.action_bias
-        # Enforcing action bound
-        log_prob = torch.sum(dist.log_prob(a_t_pretanh) - torch.log(self.action_scale * (1 - a_t.pow(2)) + 1e-4), -1)
-        mu = torch.tanh(mu)
+        a_t_before_act_fn = dist.rsample() # Reparameterization trick
+
+        if self.mu_act_fn:
+            # Enforcing action bound
+            if self.mu_act_fn == 'tanh':
+                a_t = torch.tanh(a_t_before_act_fn)
+                log_prob = torch.sum(dist.log_prob(a_t_before_act_fn) - torch.log(self.action_scale * (1 - a_t.pow(2)) + 1e-4), -1)
+                mu = torch.tanh(mu)
+            else:
+                raise NotImplementedError
+        else:
+            a_t = a_t_before_act_fn
+            log_prob = torch.sum(dist.log_prob(a_t), -1)
+
+        action = self.action_scale * a_t + self.action_bias        
         return action, log_prob, mu
 
 

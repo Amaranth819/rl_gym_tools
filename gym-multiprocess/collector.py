@@ -20,8 +20,7 @@ class Collector(object):
         self.preprocess_fn = preprocess_fn
 
 
-    def collect(self, n_steps = None, is_training = True, reset_buffer = False):
-        obs = self.env.reset()
+    def collect(self, n_steps = None, n_epochs = 1, is_training = True, reset_buffer = False):
         episode_rewards_list, episode_steps_list = [], []
 
         if reset_buffer:
@@ -30,26 +29,28 @@ class Collector(object):
         if n_steps is None:
             n_steps = self.buffer.capacity 
 
-        for _ in range(n_steps):
-            if self.model is None:
-                action = self.env.sample_actions()
-            else:
-                with torch.no_grad():
-                    if self.preprocess_fn:
-                        obs = self.preprocess_fn(obs)
-                    obs_t = np_to_tensor(obs, self.model.device).float()
-                    a_t, _, mean = self.model.predict(obs_t)
-                    action = tensor_to_np(a_t if is_training else mean)
-            
-            next_obs, rewards, dones, infos = self.env.step(action)
-            if is_training:
-                self.buffer.add((obs, next_obs, action, rewards, dones))
-            obs = next_obs.copy()
+        for _ in range(n_epochs):
+            obs = self.env.reset()
+            for _ in range(n_steps):
+                if self.model is None:
+                    action = self.env.sample_actions()
+                else:
+                    with torch.no_grad():
+                        if self.preprocess_fn:
+                            obs = self.preprocess_fn(obs)
+                        obs_t = np_to_tensor(obs, self.model.device).float()
+                        a_t, _, mean = self.model.predict(obs_t)
+                        action = tensor_to_np(a_t if is_training else mean)
+                
+                next_obs, rewards, dones, infos = self.env.step(action)
+                if is_training:
+                    self.buffer.add((obs, next_obs, action, rewards, dones))
+                obs = next_obs.copy()
 
-            for info in infos:
-                if info['terminate']:
-                    episode_rewards_list.append(info['episode_reward'])
-                    episode_steps_list.append(info['episode_step'])
+                for info in infos:
+                    if info['terminate']:
+                        episode_rewards_list.append(info['episode_reward'])
+                        episode_steps_list.append(info['episode_step'])
 
         log_info = {
             'Sample Rewards Mean' : np.mean(episode_rewards_list),
